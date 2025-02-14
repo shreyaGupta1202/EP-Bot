@@ -1,0 +1,1 @@
+pip install -U google-generativeai python-dotenv pyTelegramBotAPI PyMuPDF faiss-cpu sentence-transformers
