@@ -151,12 +151,13 @@ def send_welcome(message):
 def handle_message(message):
     user_text = message.text
 
-    # Store message for retrieval
+    # Store message for retrieval in groups
     if message.chat.type in ["group", "supergroup"]:
         store_group_message(message)
 
-    # Ensure bot only responds when tagged
-    is_mentioned = False
+    # Check if the bot is mentioned in group chats
+    is_mentioned = message.chat.type == "private"  # Always respond in DMs
+
     if message.chat.type in ["group", "supergroup"] and message.entities:
         for entity in message.entities:
             if entity.type == "mention":
@@ -165,12 +166,13 @@ def handle_message(message):
                     is_mentioned = True
                     break
 
+    # Ignore messages in group chats unless bot is mentioned
     if not is_mentioned:
         return
 
     # Handle Knowledge Base Addition
-    if user_text.lower().startswith(f"@{bot_username} addkb"):
-        new_kb_entry = user_text.replace(f"@{bot_username} addkb", "").strip()
+    if user_text.lower().startswith(f"@{bot_username} addkb") or (message.chat.type == "private" and user_text.lower().startswith("addkb")):
+        new_kb_entry = user_text.replace(f"@{bot_username} addkb", "").strip() if message.chat.type != "private" else user_text.replace("addkb", "").strip()
         if new_kb_entry:
             custom_kb.append(new_kb_entry)
             save_custom_kb()
@@ -178,12 +180,12 @@ def handle_message(message):
             bot.reply_to(message, "Knowledge added successfully!")
         return
 
-    # Remove bot mention from user query
+    # Remove bot mention in group chats
     user_question = user_text.replace(f"@{bot_username}", "").strip()
 
     # Retrieve context
     context = retrieve_context(user_question)
-    
+
     if not context:
         bot.reply_to(message, "I couldn't find relevant information.")
         return
@@ -192,6 +194,7 @@ def handle_message(message):
     prompt = f"Using the following knowledge, provide an answer:\n\nContext: {context}\n\nQuestion: {user_question}"
     response = model.generate_content(prompt)
     bot.reply_to(message, response.text if response.text else "I couldn't generate a response.")
+
 
 
 # Start polling
