@@ -9,6 +9,9 @@ import pandas as pd  # For handling tables
 import time
 import json
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from reportlab.lib.pagesizes import letter
+from reportlab.pdfgen import canvas
+
 
 # Load environment variables
 load_dotenv()
@@ -63,6 +66,43 @@ def save_custom_kb():
     with open(kb_file, "w", encoding="utf-8") as f:
         for entry in custom_kb:
             f.write(entry + "\n")
+
+
+def convert_kb_to_pdf():
+    """Convert kb.txt to kb.pdf and save it in /data/pdf_docs."""
+    kb_txt_path = "knowledge_base/kb.txt"
+    kb_pdf_path = "data/pdf_docs/kb.pdf"
+
+    if not os.path.exists(kb_txt_path):
+        print("No kb.txt found to convert.")
+        return
+
+    # Read the text file
+    with open(kb_txt_path, "r", encoding="utf-8") as f:
+        kb_text = f.read()
+
+    # Create a PDF
+    c = canvas.Canvas(kb_pdf_path, pagesize=letter)
+    c.setFont("Helvetica", 12)
+
+    # Split text into lines to fit the page
+    y_position = 750  # Start from top
+    line_height = 15
+    for line in kb_text.split("\n"):
+        if y_position < 50:  # If page is full, create a new one
+            c.showPage()
+            c.setFont("Helvetica", 12)
+            y_position = 750
+
+        c.drawString(50, y_position, line)
+        y_position -= line_height
+
+    c.save()
+    print(f"Converted kb.txt to {kb_pdf_path}")
+
+# Call the function
+convert_kb_to_pdf()
+
 
 ### --- Load and Save Embeddings Cache ---
 def load_embeddings_cache():
@@ -143,37 +183,55 @@ def load_pdfs_and_generate_embeddings():
         if pdf_file.endswith(".pdf"):
             pdf_path = os.path.join(pdf_folder, pdf_file)
             text, tables = extract_text_and_tables(pdf_path)
+
             if text:
-                # Split text into chunks
                 chunks = split_text_into_chunks(text)
                 with ThreadPoolExecutor() as executor:
-                    futures = []
+                    futures = {}
                     for chunk in chunks:
                         cache_key = f"{pdf_file}:{hash(chunk)}"
+                        
                         if cache_key in cache:
+                            print(f"Using cached embedding for: {pdf_file}")
                             embedding = cache[cache_key]
+                            documents.append({"title": pdf_file, "text": chunk, "embedding": embedding})
                         else:
-                            futures.append(executor.submit(generate_embedding_with_retries, chunk, pdf_file))
+                            futures[executor.submit(generate_embedding_with_retries, chunk, pdf_file)] = (cache_key, chunk)
+
+                    # Process embeddings
                     for future in as_completed(futures):
+                        cache_key, chunk = futures[future]
                         try:
                             embedding = future.result()
-                            cache[cache_key] = embedding
-                            documents.append({"title": pdf_file, "text": chunk, "embedding": embedding})
+                            if embedding:  # Ensure embedding is valid
+                                cache[cache_key] = embedding
+                                documents.append({"title": pdf_file, "text": chunk, "embedding": embedding})
+                            else:
+                                print(f"Warning: Empty embedding for {pdf_file}")
                         except Exception as e:
-                            print(f"Failed to generate embedding: {e}")
+                            print(f"Failed to generate embedding for {pdf_file}: {e}")
 
             # Handle tables
             for table in tables:
                 table_text = table.to_string(index=False)
                 cache_key = f"{pdf_file}:table:{hash(table_text)}"
+                
                 if cache_key in cache:
+                    print(f"Using cached embedding for table in {pdf_file}")
                     embedding = cache[cache_key]
                 else:
-                    embedding = generate_embedding_with_retries(table_text, pdf_file)
-                    cache[cache_key] = embedding
+                    try:
+                        embedding = generate_embedding_with_retries(table_text, pdf_file)
+                        cache[cache_key] = embedding
+                    except Exception as e:
+                        print(f"Failed to generate table embedding for {pdf_file}: {e}")
+                        continue  # Skip failed embeddings
+                
                 documents.append({"title": pdf_file, "text": table_text, "embedding": embedding})
 
     save_embeddings_cache(cache)
+    print(f"Loaded {len(documents)} document chunks with embeddings.")
+
 
 ### --- Embedding Functions ---
 def embed_query(query):
